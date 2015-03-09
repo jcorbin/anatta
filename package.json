@@ -1,0 +1,69 @@
+{
+  "name": "anatta",
+  "version": "0.1.0",
+  "description": "Minimization Of Self",
+  "keywords": [],
+  "author": "Joshua T Corbin <joshua@wunjo.org>",
+  "repository": "git://github.com/jcorbin/anatta.git",
+  "main": "index.js",
+  "homepage": "https://github.com/jcorbin/anatta",
+  "bugs": {
+    "url": "https://github.com/jcorbin/anatta/issues",
+    "email": "joshua@wunjo.org"
+  },
+  "contributors": [
+    {
+      "name": "Joshua T Corbin"
+    }
+  ],
+  "dependencies": {
+  },
+  "devDependencies": {
+    "ansi-color": "^0.2.1",
+    "coveralls": "^2.10.0",
+    "istanbul": "^0.3.5",
+    "itape": "^1.5.0",
+    "jshint": "^2.6.3",
+    "opn": "^1.0.1",
+    "pre-commit": "0.0.9",
+    "tape": "^3.4.0"
+  },
+  "licenses": [
+    {
+      "type": "MIT",
+      "url": "http://github.com/jcorbin/anatta/raw/master/LICENSE"
+    }
+  ],
+  "scripts": {
+    "check-cover": "istanbul check-coverage --branches=100 --lines=100 --functions=100",
+    "check-ls": "npm ls 1>/dev/null",
+    "cover": "npm run test-cover -s && npm run check-cover -s",
+    "lint": "jshint .",
+    "test": "npm run check-ls -s && npm run lint -s && npm run cover -s",
+    "test-cover": "istanbul cover --report html --print detail -- test/index.js",
+    "trace": "itape test/index.js --trace",
+    "travis": "npm run cover -s && istanbul report lcov && ((cat coverage/lcov.info | coveralls) || exit 0)",
+    "view-cover": "opn ./coverage/index.html"
+  },
+  "engines": {
+    "node": ">= 0.10.x"
+  },
+  "pre-commit": [
+    "check-licence",
+    "test"
+  ],
+  "pre-commit.silent": true,
+  "itape": {
+    "trace": {
+      "debuglog": [
+        "anatta"
+      ],
+      "leakedHandles": {
+        "timeout": 5001,
+        "debugSockets": true
+      },
+      "formatStack": true
+    }
+  },
+  "private": false
+}
