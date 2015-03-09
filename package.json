@@ -5,7 +5,7 @@
   "keywords": [],
   "author": "Joshua T Corbin <joshua@wunjo.org>",
   "repository": "git://github.com/jcorbin/anatta.git",
-  "main": "index.js",
+  "main": "anatta.js",
   "homepage": "https://github.com/jcorbin/anatta",
   "bugs": {
     "url": "https://github.com/jcorbin/anatta/issues",
@@ -17,6 +17,12 @@
     }
   ],
   "dependencies": {
+    "deep-copy": "^1.0.0",
+    "es6-map": "^0.1.1",
+    "escodegen": "^1.6.1",
+    "esprima": "^1.2.5",
+    "estraverse": "^2.0.0",
+    "pattern-match": "^0.3.0"
   },
   "devDependencies": {
     "ansi-color": "^0.2.1",
