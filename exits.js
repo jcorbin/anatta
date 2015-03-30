@@ -55,10 +55,10 @@ function replaceExits(ast, template) {
                         loop.used++;
                         ret = block.expr([ret, {
                             type: 'BreakStatement',
-                            label: {
+                            label: loop.needLabel ? {
                                 type: 'Identifier',
-                                name: loop.needLabel ? loop.sym : null
-                            }
+                                name: loop.sym
+                            } : null
                         }]);
                     }
                     return ret;

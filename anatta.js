@@ -10,38 +10,33 @@ var inlineObjectMembers = require('./inline_object_members');
 var pruneDead = require('./prune_dead');
 
 function anatta(obj, name, filter) {
+    var cache = {};
     var deps = {};
     var scope = {};
 
-    // TODO: enable, confusing for now
-    // var memo = es6Map();
-    // var reify = memoReify;
-    var reify = _astify;
+    console.log('// compiling');
+    var ast = _compile(name || '', obj, filter);
 
-    // function memoReify(name, val) {
-    //     var prior = memo.get(val);
-    //     if (prior) {
-    //         console.log('PRIOR GOT', prior, 'FOR', name, val);
-    //         return prior;
-    //     }
-    //     var ast = _reify(name, val);
-    //     memo.set(val, ast);
-    //     return ast;
-    // }
+    // console.log('_COMPILE', name, require('util').inspect(ast, {depth: Infinity}));
 
-    var ast = _compile(name || '', obj);
+    console.log('// expanding objects');
+    ast = expandObjExp(ast, function(prop) {
+        return filter(prop.key.name);
+    });
 
-    ast = expandObjExp(ast, filter);
+    console.log('// reducing iifes');
+    ast = reduceIife(ast);
 
+    console.log('// resolving free vars');
     var freeVars = {};
     freeVariables.each(ast, function eachFreeVar(node) {
         freeVars[node.name] = true;
     });
 
+    console.log('// building decls');
     var declKeys = Object.keys(scope).filter(function(key) {
         return Boolean(freeVars[key]);
     });
-
     var decls = declKeys.map(function(key) {
         delete freeVars[key];
         return {
@@ -53,7 +48,6 @@ function anatta(obj, name, filter) {
             init: scope[key]
         };
     });
-
     if (decls.length) {
         ast = block.expr(ast);
         ast.body.unshift({
@@ -66,108 +60,64 @@ function anatta(obj, name, filter) {
     ast.deps = deps;
     return ast;
 
-    function _compile(prefix, obj) {
-        var ast = astify(obj);
-        var localDeps = {};
-        // scope = Object.create(scope);
+    function _compile(prefix, obj, filter) {
+        var ast = {
+            type: 'ObjectExpression',
+            properties: []
+        };
+        console.log('// _compile %s', prefix);
 
-        ast = splatThis(ast, obj, function handleThisProp(name, val) {
-            if (prefix) {
-                name = prefix + '_' + name;
-                // name[0].toUpperCase() + name.slice(1);
-            }
-            // console.log('HANDLE', name);
-            if (!scope[name]) {
-                if (val === undefined) {
-                    scope[name] = {type: 'Identifier', name: 'undefined'};
-                } else if (val === null) {
-                    scope[name] = {type: 'Literal', value: null, raw: 'null'};
-                } else {
-                    scope[name] = reify(name, val);
+        if (filter) {
+            for (var prop in obj) {
+                if (filter(prop)) {
+                    ast.properties.push({
+                        type: 'Property',
+                        key: {type: 'Identifier', name: prop},
+                        value: compify(prefix + '_' + prop, obj[prop])
+                    });
                 }
             }
-            return name;
-        });
+        } else {
+            Object.keys(obj).forEach(function each(prop) {
+                ast.properties.push({
+                    type: 'Property',
+                    key: {type: 'Identifier', name: prop},
+                    value: compify(prefix + '_' + prop, obj[prop])
+                });
+            });
+        }
+
+        ast = splatThis(ast, obj, compProp);
 
         // console.log('SPLATED', require('escodegen').generate(ast));
         // console.log('SPLATED', require('util').inspect(ast, {depth: Infinity}));
 
-        var resolved = 0;
-        do {
-            var res = resolveFreeVariables(ast);
-            resolved = res[0];
-            ast = res[1];
-            ast = inlineObjectMembers(ast);
-            ast = pruneDead(ast);
+        ast = resolveDeps(deps, scope, obj, ast);
 
-            // console.log('ROUND', require('escodegen').generate(ast));
-            // console.log('ROUND', require('util').inspect(ast, {depth: Infinity}));
-
-        } while (resolved);
-
-        ast = reduceIife(ast);
+        // ast = reduceIife(ast);
 
         // console.log('REDUCED', require('escodegen').generate(ast));
         // console.log('REDUCED', require('util').inspect(ast, {depth: Infinity}));
 
-        // var inner = scope;
-        // console.log('POP', prefix, Object.keys(inner));
-        // scope = Object.getPrototypeOf(scope);
-
         return ast;
 
-        function resolveFreeVariables(ast) {
-            var resolved = 0;
-            ast = freeVariables.replace(ast, function eachFreeVar(node) {
-                var last;
-                do {
-                    last = node;
-                    node = resolve(node);
-                    if (last !== node) ++resolved;
-                } while (node.type === 'Identifier' && node !== last);
-                return node;
-            });
-            return [resolved, ast];
-        }
-
-        function resolve(id) {
-            if (scope[id.name] !== undefined) {
-                // console.log('SCOPE', id.name, '=>', scope[id.name]);
-                return scope[id.name];
+        function compProp(name, val) {
+            if (prefix) name = prefix + '_' + name;
+            if (val === undefined) {
+                return {type: 'Identifier', name: 'undefined'};
+            } else if (val === null) {
+                return {type: 'Literal', value: null, raw: 'null'};
+            } else {
+                return compify(prefix + '_' + name, val);
             }
-            if (localDeps[id.name] !== undefined) {
-                // console.log('LOCAL CACHED', id.name, '=>', localDeps[id.name]);
-                return localDeps[id.name];
-            }
-
-            var match = /^_instanceDeps\$(.+)\$(.+)$/.exec(id.name);
-            if (match) {
-                var cons = match[1];
-                var prop = match[2];
-                deps[id.name] = findInstanceDep(cons, prop, obj);
-                localDeps[id.name] = id;
-                return id;
-            }
-
-            var res = findConstructorProperty(id.name, obj);
-            if (res) {
-                var depKey = res[0] + '_' + id.name;
-                deps[depKey] = res[1];
-                localDeps[id.name] = {type: 'Identifier', name: depKey};
-                // console.log('LOCAL', id.name, '=>', localDeps[id.name]);
-                return localDeps[id.name];
-            }
-
-            // console.log('UNBOUND', id.name);
-
-            return id;
         }
     }
 
-    function _astify(name, val) {
+    function compify(name, val) {
+        if (cache[name] !== undefined) return cache[name];
         if (typeof val === 'object') {
             if (Array.isArray(val)) {
-                return {
+                cache[name] = {
                     type: 'ArrayExpression',
                     elements: val.map(function(subval, i) {
                         var subname = name + String(i);
@@ -175,11 +125,12 @@ function anatta(obj, name, filter) {
                     })
                 };
             } else {
-                return _compile(name, val);
+                cache[name] = _compile(name, val);
             }
         } else {
-            return astify(val);
+            cache[name] = astify(val);
         }
+        return cache[name];
     }
 }
 
@@ -203,6 +154,68 @@ function findConstructorProperty(prop, obj) {
         obj = Object.getPrototypeOf(obj);
     }
     return null;
+}
+
+function resolveDeps(deps, scope, obj, ast) {
+    var localDeps = {};
+    var resolved = 0;
+    do {
+        var res = resolveFreeVariables(ast);
+        resolved = res[0];
+        ast = res[1];
+        ast = inlineObjectMembers(ast);
+        ast = pruneDead(ast);
+        // console.log('ROUND', require('escodegen').generate(ast));
+        // console.log('ROUND', require('util').inspect(ast, {depth: Infinity}));
+    } while (resolved);
+    return ast;
+
+    function resolveFreeVariables(ast) {
+        var resolved = 0;
+        ast = freeVariables.replace(ast, function eachFreeVar(node) {
+            var last;
+            do {
+                last = node;
+                node = resolve(node);
+                if (last !== node) ++resolved;
+            } while (node.type === 'Identifier' && node !== last);
+            return node;
+        });
+        return [resolved, ast];
+    }
+
+    function resolve(id) {
+        if (scope[id.name] !== undefined) {
+            // console.log('SCOPE', id.name, '=>', scope[id.name]);
+            return scope[id.name];
+        }
+        if (localDeps[id.name] !== undefined) {
+            // console.log('LOCAL CACHED', id.name, '=>', localDeps[id.name]);
+            return localDeps[id.name];
+        }
+
+        var match = /^_instanceDeps\$(.+)\$(.+)$/.exec(id.name);
+        if (match) {
+            var cons = match[1];
+            var prop = match[2];
+            deps[id.name] = findInstanceDep(cons, prop, obj);
+            localDeps[id.name] = id;
+            return id;
+        }
+
+        var res = findConstructorProperty(id.name, obj);
+        if (res) {
+            var depKey = res[0] + '_' + id.name;
+            deps[depKey] = res[1];
+            localDeps[id.name] = {type: 'Identifier', name: depKey};
+            // console.log('LOCAL', id.name, '=>', localDeps[id.name]);
+            return localDeps[id.name];
+        }
+
+        // console.log('UNBOUND', id.name);
+
+        return id;
+    }
 }
 
 module.exports = anatta;

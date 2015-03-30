@@ -7,6 +7,14 @@ function visitor(eachFreeVar) {
     var replacer = scopeMod.toplevelReplacer(function process(node, parent) {
         if (node.name === 'undefined') return node;
         if (scope.vars[node.name]) return node;
+
+        switch (parent.type) {
+            case 'LabeledStatement':
+            case 'BreakStatement':
+                return node;
+        }
+        // console.error('!!!', node.name, parent.type);
+
         var ret = eachFreeVar(node, parent);
         if (ret) {
             // TODO: think this is only correct in the node.type=identifier branch
@@ -40,5 +48,6 @@ function replaceFreeVariables(ast, eachFreeVar) {
     );
 }
 
+module.exports.visitor = visitor;
 module.exports.each = eachFreeVariable;
 module.exports.replace = replaceFreeVariables;

@@ -5,27 +5,13 @@ var deepCopy = require('deep-copy');
 
 var block = require('./block');
 
-function unrolled(ast, pattern, ar) {
+function unrolled(ast) {
     var sym = ast.update.argument;
-    var arExpr = {
-        type: 'ArrayExpression',
-        elements: ar
-    };
-    ast = estraverse.replace(ast, {
-        enter: function(node) {
-            return match(node, function(when) {
-                when({
-                    type: 'MemberExpression',
-                    computed: false,
-                    object: pattern,
-                    property: { type: 'Identifier', name: 'length' }
-                }, function() {return makeLiteral(ar.length);});
-                when(match.any, function() {return node;});
-            });
-        }
-    });
+
     // console.log('UNROLL', require('escodegen').generate(ast));
     var tmp = ast.body;
+    // console.log('UNROLL BODY', require('util').inspect(tmp, {depth: Infinity}));
+
     ast.body = {
         type: 'CallExpression',
         callee: {type: 'Identifier', name: 'each'},

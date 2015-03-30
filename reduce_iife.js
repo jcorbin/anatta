@@ -1,17 +1,8 @@
 var estraverse = require('estraverse');
-var match = require('pattern-match');
 
 var block = require('./block');
 var exits = require('./exits');
 var scopeMod = require('./scope');
-
-var IIFEPattern = {
-    type: 'CallExpression',
-    arguments: match.var('callArgs'),
-    callee: match.var('func', {
-        type: 'FunctionExpression'
-    })
-};
 
 function reduceIife(ast) {
     var scope = scopeMod.visitor();
@@ -19,57 +10,63 @@ function reduceIife(ast) {
     ast = estraverse.replace(ast, {
         enter: function(node, parent) {
             scope.enter(node, parent);
-            return match(node, function(when) {
-                // tail iife
-                when({
-                    type: 'ReturnStatement',
-                    argument: IIFEPattern
-                }, function inlineTailIife(m) {
-                    return inlineIife(m, scope, {
-                        return: function(arg) {
-                            return {
-                                type: 'ReturnStatement',
-                                argument: arg
-                            };
-                        }
-                    });
-                });
 
-                // var foo = iife();
-                when({
-                    type: 'VariableDeclaration',
-                    declarations: [{
-                        type: 'VariableDeclarator',
-                        id: {
-                            type: 'Identifier',
-                            name: match.var('name')
-                        },
-                        init: IIFEPattern
-                    }]
-                }, function(m) {
-                    return inlineVarIffe(m, scope);
-                });
+            // tail iife
+            if (node.type === 'ReturnStatement' &&
+                node.argument.type === 'CallExpression' &&
+                node.argument.callee.type === 'FunctionExpression') {
+                console.log('// inlining tail iife');
+                return inlineIife(node.argument, scope);
+                // , {
+                //     return: function(arg) {
+                //         return {
+                //             type: 'ReturnStatement',
+                //             argument: arg
+                //         };
+                //     }
+                // }
+            }
 
-                // foo = iife();
-                when({
-                    type: 'ExpressionStatement',
-                    expression: {
-                        type: 'AssignmentExpression',
-                        operator: '=',
-                        left: {
-                            type: 'Identifier',
-                            name: match.var('name')
-                        },
-                        right: IIFEPattern
+            // var foo = iife();
+            if (node.type === 'VariableDeclaration') {
+                var remain = [];
+                var body = [];
+                for (var i = 0; i < node.declarations.length; i++) {
+                    var decl = node.declarations[i];
+                    if (decl.type === 'VariableDeclarator' &&
+                        decl.init &&
+                        decl.init.type === 'CallExpression' &&
+                        decl.init.callee.type === 'FunctionExpression') {
+                        console.log('// inlining var decl iife');
+                        body.push(inlineVarIffe(decl, scope));
+                    } else {
+                        remain.push(decl);
                     }
-                }, function(m) {
-                    return inlineAssignIIFE(m, scope);
-                });
+                }
+                if (remain.length) {
+                    body.unshift({
+                        type: 'VariableDeclaration',
+                        kind: 'var',
+                        declarations: remain
+                    });
+                }
+                return block.oneOrWrap(body);
+            }
 
-                // TODO: other iife in expr?
+            // foo = iife();
+            if (node.type === 'ExpressionStatement' &&
+                node.expression.type === 'AssignmentExpression' &&
+                node.expression.operator === '=' &&
+                node.expression.right.type === 'CallExpression' &&
+                node.expression.right.callee.type === 'FunctionExpression') {
+                console.log('// inlining assign iife');
+                return inlineAssignIIFE(
+                    node.expression.left.name,
+                    node.expression.right,
+                    scope);
+            }
 
-                when(match.any, function() {return node;});
-            });
+            return node;
         },
 
         leave: function leave(node, parent) {
@@ -78,13 +75,14 @@ function reduceIife(ast) {
         }
     });
 
+    console.log('// post iife block flatten');
     ast = block.flatten(ast);
 
     return ast;
 }
 
-function inlineVarIffe(m, scope) {
-    var ast = inlineAssignIIFE(m, scope);
+function inlineVarIffe(decl, scope) {
+    var ast = inlineAssignIIFE(decl.id.name, decl.init, scope);
     ast = block.expr([{
         type: 'VariableDeclaration',
         kind: 'var',
@@ -92,7 +90,7 @@ function inlineVarIffe(m, scope) {
             type: 'VariableDeclarator',
             id: {
                 type: 'Identifier',
-                name: m.name
+                name: decl.id.name
             },
             init: null
         }]
@@ -100,8 +98,8 @@ function inlineVarIffe(m, scope) {
     return ast;
 }
 
-function inlineAssignIIFE(m, scope) {
-    var ast = inlineIife(m, scope, {
+function inlineAssignIIFE(name, iife, scope) {
+    var ast = inlineIife(iife, scope, {
         return: function(arg) {
             return {
                 type: 'ExpressionStatement',
@@ -110,7 +108,7 @@ function inlineAssignIIFE(m, scope) {
                     operator: '=',
                     left: {
                         type: 'Identifier',
-                        name: m.name
+                        name: name
                     },
                     right: arg
                 }
@@ -120,20 +118,12 @@ function inlineAssignIIFE(m, scope) {
     return ast;
 }
 
-function inlineIife(m, scope, replacement) {
-    var callArgs = m.callArgs;
-    var func = m.func;
+function inlineIife(node, scope, replacement) {
+    var callArgs = node.arguments;
+    var func = node.callee;
     var body = func.body;
     var funcParams = func.params;
     var funcName = scope.uniqueName(func.id && func.id.name || 'anon');
-
-    if (!replacement) {
-        replacement = {
-            return: function(arg) {
-                return arg; // TODO: some expressions can be eliminated?
-            }
-        };
-    }
 
     var decls = [];
     for (var i = funcParams.length; --i >= 0; ) {
@@ -158,9 +148,13 @@ function inlineIife(m, scope, replacement) {
 
     var ast = block.expr(body);
 
+    console.log('// prefixing iife variables');
     ast = scopeMod.prefixDirectVars(ast, funcName + '_', scope);
 
-    ast = exits.replace(ast, replacement);
+    if (replacement) {
+        console.log('// replacing iife exits');
+        ast = exits.replace(ast, replacement);
+    }
 
     return ast;
 }
