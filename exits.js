@@ -30,12 +30,37 @@ function exits(ast) {
 }
 
 function replaceExits(ast, template) {
+    var loopStack = [];
+    var sym = 0;
+
     var visitor = {
         enter: function(node) {
+            if ((node.type === 'ForStatement' ||
+                 node.type === 'WhileStatement'
+                ) && !node.exitSym) {
+                loopStack.push({
+                    sym: node.exitSym = 'loop_exit_' + (++sym),
+                    needLabel: false,
+                    used: 0
+                });
+            }
+
             return match(node, function(when) {
                 when(returnArg, function(m) {
                     var ret = template.return(m.arg);
                     ret.wasFinal = true;
+                    var loop = loopStack[0];
+                    if (loop) {
+                        if (loopStack.length > 1) loop.needLabel = true;
+                        loop.used++;
+                        ret = block.expr([ret, {
+                            type: 'BreakStatement',
+                            label: {
+                                type: 'Identifier',
+                                name: loop.needLabel ? loop.sym : null
+                            }
+                        }]);
+                    }
                     return ret;
                 });
 
@@ -45,12 +70,20 @@ function replaceExits(ast, template) {
         leave: function(node, parent) {
             if (node.wasFinal) parent.wasFinal = true;
 
-            if (node.type === 'ForStatement') {
-                throw new Error('unsupported exit replacement in a for loop');
-            }
-
-            if (node.type === 'WhileStatement') {
-                throw new Error('unsupported exit replacement in a while loop');
+            if (node.type === 'ForStatement' ||
+                node.type === 'WhileStatement') {
+                var loop = loopStack.pop();
+                if (loop && loop.needLabel) {
+                    node = {
+                        type: 'LabeledStatement',
+                        label: {
+                            type: 'Identifier',
+                            name: loop.sym,
+                        },
+                        body: node
+                    };
+                }
+                return node;
             }
 
             if (node.type !== 'BlockStatement') return node;
